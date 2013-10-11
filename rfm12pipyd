@@ -1,0 +1,53 @@
+#! /bin/bash
+# Copyright (c) 2013 London Hackspace
+# All rights reserved.
+#
+# Author: Jasper Wallace, 2013
+#
+# Please send feedback to jasper@pointless.net
+#
+# /etc/init.d/rfm12pipyd
+#
+### BEGIN INIT INFO
+# Provides: rfm12pipyd
+# Required-Start: $local_fs $remote_fs $network $syslog $named
+# Required-Stop: $local_fs $remote_fs $network $syslog $named
+# Default-Start:  2 3 4 5
+# Default-Stop:   0 1 6
+# Short-Description: RFM12pi daemon
+# Description: Turns the RFM12pi stuff into data on a webserver
+### END INIT INFO
+
+. /lib/lsb/init-functions
+
+test -f /etc/default/rcS && . /etc/default/rcS
+
+base=/root/rpi-oem-rx/
+
+case "$1" in
+  start)
+    log_daemon_msg "Starting server" "rfm12pipyd"
+    # Start the daemon
+    python ${base}/main.py
+    log_end_msg $?
+    ;;
+  stop)
+    log_daemon_msg "Stopping server" "rfm12pipyd"
+    # Stop the daemon
+    kill `cat /var/run/rfm12pipyd.pid`
+    log_end_msg $?
+    ;;
+  restart)
+    log_daemon_msg "Restarting server" "rfm12pipyd"
+    stop
+    start
+    log_end_msg $?
+    ;;
+  *)
+    # Refuse to do other stuff
+    echo "Usage: $0 {start|stop|restart}"
+    exit 1
+    ;;
+esac
+
+exit 0
