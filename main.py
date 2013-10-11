@@ -1,12 +1,24 @@
 #!/usr/bin/env python
-import serial, threading, Queue, time
+
+import serial, threading, Queue, time, logging, daemon
+from logging.handlers import SysLogHandler
 import BaseHTTPServer, urlparse, urllib
+from pidfile import PidFile
 
 class RFM12PIRx(threading.Thread):
-  def __init__(self, port, queue):
+  def __init__(self, port, queues):
+    """Parse the records on the serial port and add them to queue
+       for later use.
+       
+    Args:
+      port (str): the serial port to use
+      queues (dict): a dict of nodeid: (queue, labels)
+        queue: the queue to append the results to
+        labels: one for each of the 16 bit values to expect from the sensor
+    """
     super(RFM12PIRx, self).__init__()
     self.s = serial.Serial(port, 9600)
-    self.q = queue
+    self.qs = queues
     self.setup(15,8,210)
     self.daemon = True
 
@@ -37,8 +49,7 @@ class RFM12PIRx(threading.Thread):
             if (int16 > 32768):
               int16 = -65536 + int16
             out.append(int16)
-          print out
-          self.q.put(out)
+          self.qs[nodeid][0].put(out)
       else:
         if ord(data) != 1:
           d = d + data
@@ -46,22 +57,38 @@ class RFM12PIRx(threading.Thread):
 class Handler(BaseHTTPServer.BaseHTTPRequestHandler):
   def address_string(self):
     return str(self.client_address[0])
-    
+
+  def log_message(self, format, *args):
+    logger.info(self.address_string() + " " + format % args)
+
   def do_GET(self):
-    print self.path
     url = urlparse.urlparse(self.path)
     params = urlparse.parse_qs(url.query)
     path = url.path
-    if path == "favicon.ico":
+    if path == "/favicon.ico":
       return
+
+    nodeid = self.path.strip("/")
+    # throws ValueError, but we can't seem to catch it??!
+    # keeps on serving tho, oh well.
+    nodeid = int(nodeid)
+    
+    if nodeid not in queues:
+      self.send_response(404)
+      self.send_header('Content-type', 'text/plain')
+      self.end_headers()
+      self.wfile.write("nodeid " + str(nodeid) + " not found.\n")
+      return
+
     self.send_response(200)
     self.send_header('Content-type', 'text/plain')
     self.end_headers()
+
     count = 0
     out = []
     try:
       while True:
-        data = queue.get(block=False)
+        data = queues[nodeid][0].get(block=False)
         if len(data) != len(out):
           out = data
         else:
@@ -69,26 +96,41 @@ class Handler(BaseHTTPServer.BaseHTTPRequestHandler):
             out[i] = out[i] + d
         count += 1
     except Queue.Empty:
-      print "done all"
       for i,d in enumerate(out):
         out[i] = out[i] / count
 
-      print out, count
-      labels = ('CT1', 'CT2', 'CT3', 'Vcc')
+      labels = queues[nodeid][1]
       for i,d in enumerate(out):
         out[i] = labels[i] + ':' + str(d)
     if len(out) == 0:
-      self.wfile.write("NaN\n")
+      ret = []
+      for l in labels:
+        ret.append("U:" + l)
+      self.wfile.write(" ".join(ret) + "\n")
     else:
       self.wfile.write(" ".join(out) + "\n")
-     
+
+
 if __name__ == "__main__":
-  queue = Queue.Queue()
   port = "/dev/ttyAMA0"
-  rpi = RFM12PIRx(port, queue)
+  queues = {
+        10: (Queue.Queue(), ('CT1', 'CT2', 'CT3', 'Vcc')),
+  }
+
+  d = daemon.DaemonContext(pidfile=PidFile("/var/run/rfm12pipyd.pid"))
+  d.open()
+
+  logger = logging.root
+  logger.setLevel(logging.DEBUG)
+  syslog = SysLogHandler(address='/dev/log', facility=SysLogHandler.LOG_DAEMON)
+  formatter = logging.Formatter('RFM12Pi: %(levelname)s %(message)s')
+  syslog.setFormatter(formatter)
+  logger.addHandler(syslog)
+
+  logger.info("RFM12Pi python thing starting up.")
+
+  rpi = RFM12PIRx(port, queues)
   rpi.start()
 
   httpd = BaseHTTPServer.HTTPServer(("", 12345), Handler)
   httpd.serve_forever()
-
-  
