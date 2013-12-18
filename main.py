@@ -49,7 +49,12 @@ class RFM12PIRx(threading.Thread):
             if (int16 > 32768):
               int16 = -65536 + int16
             out.append(int16)
-          self.qs[nodeid][0].put(out)
+          if nodeid in self.qs:
+            self.qs[nodeid][0].put(out)
+          else:
+            logger.warn("unknown nodeid: %d : %s" % (nodeid, str(out)))
+        else:
+          logger.warn("wierd values: %s" % (str(values)))
       else:
         if ord(data) != 1:
           d = d + data
