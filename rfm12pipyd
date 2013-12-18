@@ -39,8 +39,9 @@ case "$1" in
     ;;
   restart)
     log_daemon_msg "Restarting server" "rfm12pipyd"
-    stop
-    start
+    $0 stop
+    sleep 1
+    $0 start
     log_end_msg $?
     ;;
   *)
